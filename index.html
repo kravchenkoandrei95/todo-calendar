@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Планировщик дел</title>
+<style>
+  :root {
+    --bg: #f4f2ee;
+    --card: #ffffff;
+    --text: #1d1d1f;
+    --muted: #7a7670;
+    --line: #e6e2db;
+    --accent: #1d1d1f;
+    --urgent: #ff3b5c;
+    --secondary: #ff9f0a;
+    --later: #20b2aa;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121214;
+      --card: #1c1c1f;
+      --text: #f2f2f2;
+      --muted: #8d8d93;
+      --line: #2c2c31;
+      --accent: #f2f2f2;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.45 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  h1 { font-size: 26px; margin: 0; letter-spacing: -.02em; }
+  .datenav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .datenav button, .btn {
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+    border-radius: 10px; padding: 7px 12px; font: inherit; cursor: pointer;
+  }
+  .datenav button:hover, .btn:hover { border-color: var(--muted); }
+  .datelabel { min-width: 170px; text-align: center; font-weight: 600; cursor: pointer; padding: 7px 4px; border-radius: 10px; }
+  .datelabel:hover { background: var(--card); }
+  .datepick { position: relative; }
+  /* padding-top — «мостик», чтобы курсор дошёл до календаря и он не закрылся */
+  .popcal {
+    position: absolute; top: 100%; left: 0; z-index: 10;
+    padding-top: 8px; width: 300px; display: none;
+  }
+  .popcal > * { background: var(--card); }
+  .popcal .cal-head { margin: 0; padding: 12px 12px 6px; border-radius: 16px 16px 0 0; box-shadow: var(--shadow); }
+  .popcal .cal { padding: 0 12px 12px; border-radius: 0 0 16px 16px; box-shadow: var(--shadow); }
+  .datepick:hover .popcal, .datepick.open .popcal { display: block; }
+  .datepick.closing .popcal { display: none; }
+
+  .grid { display: grid; grid-template-columns: 340px 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border-radius: 18px; box-shadow: var(--shadow); padding: 20px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+
+  /* Кольца */
+  .rings { position: relative; width: 220px; height: 220px; margin: 0 auto; }
+  .rings svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .rings circle { fill: none; stroke-width: 16; stroke-linecap: round; }
+  .track { opacity: .16; }
+  .bar { transition: stroke-dashoffset .6s cubic-bezier(.2,.8,.2,1); }
+  .rings .center { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+  .rings .pct { font-size: 30px; font-weight: 700; letter-spacing: -.03em; }
+  .rings .sub { font-size: 12px; color: var(--muted); }
+  .legend { display: grid; gap: 8px; margin-top: 18px; }
+  .legend .row { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+  .legend .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .legend .val { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .done-banner { margin-top: 14px; text-align: center; font-weight: 600; color: var(--later); display: none; }
+
+  /* Добавление задачи */
+  form.add { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  form.add input[type=text] {
+    flex: 1 1 220px; border: 1px solid var(--line); background: var(--bg); color: var(--text);
+    border-radius: 12px; padding: 11px 14px; font: inherit; outline: none;
+  }
+  form.add input[type=text]:focus { border-color: var(--muted); }
+  .prio-pick { display: flex; gap: 6px; }
+  .prio-pick label { cursor: pointer; }
+  .prio-pick input { display: none; }
+  .prio-pick span {
+    display: inline-block; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--line);
+    font-size: 13px; user-select: none; transition: background .15s, color .15s;
+  }
+  .prio-pick input:checked + span { color: #fff; border-color: transparent; }
+  .prio-pick input[value=urgent]:checked + span { background: var(--urgent); }
+  .prio-pick input[value=secondary]:checked + span { background: var(--secondary); }
+  .prio-pick input[value=later]:checked + span { background: var(--later); }
+  .field {
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+    border-radius: 12px; padding: 8px 10px; font: inherit; font-size: 13px; outline: none;
+  }
+  .field:focus { border-color: var(--muted); }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .filters button {
+    border: 1px solid var(--line); background: none; color: var(--muted); border-radius: 999px;
+    padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  .filters button.on { background: var(--accent); color: var(--bg); border-color: transparent; }
+  .meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+  .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
+  .tag.late { color: var(--urgent); border-color: var(--urgent); }
+  .body { flex: 1; min-width: 0; }
+  .recur { margin-top: 14px; font-size: 13px; }
+  .recur summary { cursor: pointer; color: var(--muted); }
+  .recur ul { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; }
+  .recur li { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg); border-radius: 10px; }
+  .recur li span { flex: 1; }
+  .recur li em { color: var(--muted); font-style: normal; }
+  .btn.primary { background: var(--accent); color: var(--bg); border-color: transparent; font-weight: 600; padding: 9px 16px; border-radius: 12px; }
+
+  /* Список */
+  .tasks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .task {
+    display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px;
+    border: 1px solid var(--line); border-left: 4px solid var(--c); background: var(--card);
+  }
+  .task.done .text { text-decoration: line-through; color: var(--muted); }
+  .task.done { opacity: .7; }
+  .check {
+    width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--c); flex: none;
+    display: grid; place-items: center; cursor: pointer; background: transparent; padding: 0;
+  }
+  .task.done .check { background: var(--c); }
+  .check svg { width: 14px; height: 14px; stroke: #fff; stroke-width: 3; fill: none; opacity: 0; }
+  .task.done .check svg { opacity: 1; }
+  .text { flex: 1; word-break: break-word; }
+  .text[contenteditable=true] { outline: 1px dashed var(--muted); border-radius: 6px; padding: 0 4px; }
+  .chip {
+    font-size: 12px; padding: 3px 9px; border-radius: 999px; cursor: pointer; border: none;
+    background: color-mix(in srgb, var(--c) 16%, transparent); color: var(--c); font-weight: 600; white-space: nowrap;
+  }
+  .del { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 18px; padding: 0 4px; opacity: .5; }
+  .del:hover { opacity: 1; color: var(--urgent); }
+  .empty { text-align: center; color: var(--muted); padding: 28px 0; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .toolbar .btn { font-size: 13px; padding: 6px 10px; }
+
+  /* Прогресс */
+  .week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+  .day { text-align: center; cursor: pointer; padding: 8px 2px; border-radius: 12px; border: 1px solid transparent; }
+  .day:hover { background: var(--bg); }
+  .day.sel { border-color: var(--line); background: var(--bg); }
+  .day .dn { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+  .day .dd { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .day.today .dd { color: var(--urgent); }
+  .day svg { width: 34px; height: 34px; transform: rotate(-90deg); }
+  .day circle { fill: none; stroke-width: 5; stroke-linecap: round; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 16px; }
+  .stat { background: var(--bg); border-radius: 14px; padding: 12px 14px; }
+  .stat .n { font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
+  .stat .l { font-size: 12px; color: var(--muted); }
+  .chart { display: flex; align-items: flex-end; gap: 4px; height: 90px; margin-top: 16px; }
+  .chart .b { flex: 1; background: var(--line); border-radius: 4px 4px 2px 2px; position: relative; min-height: 3px; }
+  .chart .b i { position: absolute; left: 0; right: 0; bottom: 0; border-radius: inherit; background: var(--later); }
+  .chart-cap { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .full { grid-column: 1 / -1; }
+
+  /* Окно подтверждения внутри страницы (системные confirm/alert бывают заблокированы) */
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: none; place-items: center; z-index: 50; padding: 16px; }
+  .modal.show { display: grid; }
+  .modal .box { background: var(--card); border-radius: 18px; padding: 20px; max-width: 360px; width: 100%; box-shadow: var(--shadow); }
+  .modal .msg { margin-bottom: 16px; }
+  .modal .acts { display: flex; justify-content: flex-end; gap: 8px; }
+  .btn.danger { background: var(--urgent); color: #fff; border-color: transparent; font-weight: 600; }
+  .warn {
+    background: color-mix(in srgb, var(--secondary) 18%, transparent); border-radius: 14px;
+    padding: 10px 14px; margin-bottom: 16px; font-size: 14px;
+  }
+
+  /* Календарь */
+  .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .cal-head div { font-weight: 600; }
+  .cal-head .btn { padding: 4px 12px; }
+  .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; max-width: 380px; margin: 0 auto; }
+  .cal-head { max-width: 380px; margin-left: auto; margin-right: auto; }
+  .cal .wd { font-size: 11px; color: var(--muted); text-align: center; padding-bottom: 4px; text-transform: uppercase; }
+  .cal .c {
+    aspect-ratio: 1; border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 13px; position: relative; border: 1px solid transparent;
+  }
+  .cal .c:hover { background: var(--bg); }
+  .cal .c.other { color: var(--muted); opacity: .45; }
+  .cal .c.today { color: var(--urgent); font-weight: 700; }
+  .cal .c.sel { border-color: var(--text); }
+  .cal .c.ev { background: color-mix(in srgb, var(--urgent) 12%, transparent); }
+  .cal .dots { display: flex; gap: 2px; height: 5px; margin-top: 2px; }
+  .cal .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--secondary); }
+  .cal .dots i.ok { background: var(--later); }
+  .cal .dots i.star { background: var(--urgent); }
+  .yearly { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .ev-title { font-size: 13px; color: var(--muted); margin: 14px 0 8px; font-weight: 600; }
+  .events { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+  .events li { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 12px; background: var(--bg); font-size: 14px; }
+  .events li .when { font-size: 12px; color: var(--muted); white-space: nowrap; min-width: 92px; }
+  .events li span.t { flex: 1; word-break: break-word; }
+  .events li.go { cursor: pointer; }
+  .events .none { color: var(--muted); background: none; padding: 4px 0; font-size: 13px; }
+  .today-events { display: grid; gap: 6px; margin-bottom: 12px; }
+  .today-events div {
+    padding: 8px 12px; border-radius: 12px; font-size: 14px;
+    background: color-mix(in srgb, var(--urgent) 12%, transparent); color: var(--text);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Планировщик дел</h1>
+    <div class="datenav">
+      <button id="prev" title="Предыдущий день">‹</button>
+      <div class="datepick" id="datePick">
+        <div class="datelabel" id="dateLabel" tabindex="0"></div>
+        <div class="popcal">
+          <div class="cal-head">
+            <button class="btn" id="popPrev">‹</button>
+            <div id="popTitle"></div>
+            <button class="btn" id="popNext">›</button>
+          </div>
+          <div class="cal" id="popCal"></div>
+        </div>
+      </div>
+      <button id="next" title="Следующий день">›</button>
+      <button id="today">Сегодня</button>
+      <button id="exportBtn" title="Сохранить все задачи и даты в файл">⬇ В файл</button>
+      <button id="importBtn" title="Загрузить задачи и даты из файла">⬆ Из файла</button>
+      <input type="file" id="importFile" accept=".json,application/json" hidden>
+    </div>
+  </header>
+
+  <div class="warn" id="storageWarn" hidden>
+    ⚠ Этот браузер не даёт странице сохранять данные — после перезагрузки задачи пропадут.
+    Открой файл <b>index.html</b> двойным щелчком в Chrome, Edge или Firefox.
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Кольца дня</h2>
+      <div class="rings">
+        <svg viewBox="0 0 220 220" id="ringsSvg"></svg>
+        <div class="center">
+          <div class="pct" id="pct">0%</div>
+          <div class="sub" id="pctSub">нет задач</div>
+        </div>
+      </div>
+      <div class="legend" id="legend"></div>
+      <div class="done-banner" id="doneBanner">День закрыт — все задачи выполнены 🎉</div>
+    </section>
+
+    <section class="card">
+      <h2>Задачи</h2>
+      <form class="add" id="addForm">
+        <input type="text" id="taskInput" placeholder="Что нужно сделать?" autocomplete="off" maxlength="200">
+        <div class="prio-pick">
+          <label><input type="radio" name="prio" value="urgent" checked><span>Срочно</span></label>
+          <label><input type="radio" name="prio" value="secondary"><span>Второстепенно</span></label>
+          <label><input type="radio" name="prio" value="later"><span>Потом</span></label>
+        </div>
+        <input type="time" class="field" id="taskTime" title="Срок (необязательно)">
+        <select class="field" id="taskCat" title="Категория"></select>
+        <select class="field" id="taskRepeat" title="Повтор">
+          <option value="">Без повтора</option>
+          <option value="daily">Каждый день</option>
+          <option value="weekdays">По будням</option>
+          <option value="weekly">Раз в неделю</option>
+        </select>
+        <button class="btn primary" type="submit">Добавить</button>
+      </form>
+      <div class="today-events" id="todayEvents"></div>
+      <div class="filters" id="filters"></div>
+      <ul class="tasks" id="tasks"></ul>
+      <details class="recur" id="recurBox" hidden>
+        <summary id="recurSum"></summary>
+        <ul id="recurList"></ul>
+      </details>
+      <div class="toolbar">
+        <span id="hint">Клик по приоритету — сменить. Двойной клик по тексту — редактировать.</span>
+        <button class="btn" id="carry" hidden>Перенести невыполненные со вчера</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Календарь</h2>
+      <div class="cal-head">
+        <button class="btn" id="calPrev">‹</button>
+        <div id="calTitle"></div>
+        <button class="btn" id="calNext">›</button>
+      </div>
+      <div class="cal" id="cal"></div>
+    </section>
+
+    <section class="card">
+      <h2>Важные даты и дела</h2>
+      <form class="add" id="eventForm">
+        <input type="text" id="eventInput" placeholder="Например: экзамен, день рождения, совещание" autocomplete="off" maxlength="200">
+        <input type="date" class="field" id="eventDate" required>
+        <label class="yearly"><input type="checkbox" id="eventYearly"> каждый год</label>
+        <button class="btn primary" type="submit">Добавить дату</button>
+      </form>
+      <div class="ev-title" id="evDayTitle"></div>
+      <ul class="events" id="dayEvents"></ul>
+      <div class="ev-title">Ближайшие 60 дней</div>
+      <ul class="events" id="upcoming"></ul>
+    </section>
+
+    <section class="card full">
+      <h2>Прогресс</h2>
+      <div class="week" id="week"></div>
+      <div class="stats" id="stats"></div>
+      <div class="chart" id="chart"></div>
+      <div class="chart-cap"><span>30 дней назад</span><span>Выполнено задач по дням</span><span>сегодня</span></div>
+    </section>
+  </div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="box">
+    <div class="msg" id="modalMsg"></div>
+    <div class="acts">
+      <button class="btn" id="modalNo">Отмена</button>
+      <button class="btn danger" id="modalYes">Удалить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const PRIOS = {
+  urgent:    { name: 'Срочно',        color: 'var(--urgent)',    order: 0, r: 88 },
+  secondary: { name: 'Второстепенно', color: 'var(--secondary)', order: 1, r: 68 },
+  later:     { name: 'Можно потом',   color: 'var(--later)',     order: 2, r: 48 },
+};
+const PRIO_KEYS = Object.keys(PRIOS);
+const CATS = { '': 'Без категории', work: 'Работа', college: 'Колледж', personal: 'Личное' };
+const STORE = 'todo-planner-v1';
+
+// ---------- данные ----------
+let storageOk = true;
+let data = load();
+let current = dayKey(new Date());
+let filter = 'all';
+
+function load() {
+  let d;
+  try { d = JSON.parse(localStorage.getItem(STORE)); } catch { storageOk = false; }
+  return normalize(d);
+}
+function normalize(d) {
+  d = d && typeof d === 'object' ? d : {};
+  return { tasks: d.tasks || {}, recurring: d.recurring || [], events: d.events || [] };
+}
+function save() {
+  try { localStorage.setItem(STORE, JSON.stringify(data)); }
+  catch { storageOk = false; $('storageWarn').hidden = false; }
+}
+
+// своё окно вместо confirm/alert: в некоторых браузерах они молча возвращают «Отмена»
+function ask(text, yes = 'Удалить', no = 'Отмена') {
+  $('modalMsg').textContent = text;
+  $('modalYes').textContent = yes;
+  $('modalNo').textContent = no;
+  $('modalNo').hidden = !no;
+  $('modal').classList.add('show');
+  $('modalYes').focus();
+  return new Promise(resolve => {
+    const close = v => () => { $('modal').classList.remove('show'); resolve(v); };
+    $('modalYes').onclick = close(true);
+    $('modalNo').onclick = close(false);
+    $('modal').onclick = e => { if (e.target === $('modal')) close(false)(); };
+  });
+}
+function dayKey(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function fromKey(k) { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); }
+function shift(k, n) { const d = fromKey(k); d.setDate(d.getDate() + n); return dayKey(d); }
+function tasksOf(k) { return data.tasks[k] || []; }
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+function dayStats(k) {
+  const list = tasksOf(k);
+  const by = {};
+  for (const p of PRIO_KEYS) {
+    const t = list.filter(x => x.priority === p);
+    by[p] = { total: t.length, done: t.filter(x => x.done).length };
+  }
+  const total = list.length, done = list.filter(x => x.done).length;
+  return { total, done, pct: total ? done / total : 0, by };
+}
+
+// ---------- повторяющиеся задачи ----------
+const REPEAT = { daily: 'каждый день', weekdays: 'по будням', weekly: 'раз в неделю' };
+const DOW = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+
+function repeatMatches(rule, k) {
+  if (k < rule.start || (rule.skip || []).includes(k)) return false;
+  const dow = fromKey(k).getDay();
+  if (rule.repeat === 'weekdays') return dow >= 1 && dow <= 5;
+  if (rule.repeat === 'weekly') return dow === fromKey(rule.start).getDay();
+  return true;
+}
+// создаёт экземпляры повторяющихся задач на день, если их ещё нет
+function materialize(k) {
+  let added = false;
+  for (const r of data.recurring) {
+    if (!repeatMatches(r, k) || tasksOf(k).some(t => t.rec === r.id)) continue;
+    (data.tasks[k] ||= []).push({ id: uid(), rec: r.id, text: r.text, priority: r.priority,
+      time: r.time, category: r.category, done: false });
+    added = true;
+  }
+  if (added) save();
+}
+function deleteRule(id) {
+  const today = dayKey(new Date());
+  data.recurring = data.recurring.filter(r => r.id !== id);
+  for (const k of Object.keys(data.tasks)) {
+    if (k < today) continue;
+    data.tasks[k] = data.tasks[k].filter(t => !(t.rec === id && !t.done));
+    if (!data.tasks[k].length) delete data.tasks[k];
+  }
+  save(); render();
+}
+
+// ---------- важные даты ----------
+// yearly — повторяется каждый год в тот же день (дни рождения, праздники)
+function eventsOn(k) {
+  return data.events.filter(e => e.date === k || (e.yearly && e.date <= k && e.date.slice(5) === k.slice(5)));
+}
+function addEvent(text, date, yearly) {
+  data.events.push({ id: uid(), text, date, yearly });
+  save(); render();
+}
+function deleteEvent(id) {
+  data.events = data.events.filter(e => e.id !== id);
+  save(); render();
+}
+
+// ---------- действия ----------
+function addTask(text, priority, time, category, repeat) {
+  if (repeat) {
+    data.recurring.push({ id: uid(), text, priority, time, category, repeat, start: current, skip: [] });
+    materialize(current);
+  } else {
+    (data.tasks[current] ||= []).push({ id: uid(), text, priority, time, category, done: false });
+  }
+  save(); render();
+}
+function updateTask(id, fn) {
+  const t = tasksOf(current).find(x => x.id === id);
+  if (t) { fn(t); save(); render(); }
+}
+function deleteTask(id) {
+  const t = tasksOf(current).find(x => x.id === id);
+  const rule = t && t.rec && data.recurring.find(r => r.id === t.rec);
+  if (rule) (rule.skip ||= []).push(current); // чтобы экземпляр не появился снова
+  data.tasks[current] = tasksOf(current).filter(x => x.id !== id);
+  if (!data.tasks[current].length) delete data.tasks[current];
+  save(); render();
+}
+function carryOver() {
+  const prev = shift(current, -1);
+  const left = tasksOf(prev).filter(x => !x.done && !x.rec);
+  if (!left.length) return;
+  data.tasks[prev] = tasksOf(prev).filter(x => x.done || x.rec);
+  if (!data.tasks[prev].length) delete data.tasks[prev];
+  (data.tasks[current] ||= []).push(...left.map(x => ({ ...x, id: uid() })));
+  save(); render();
+}
+
+// ---------- отрисовка ----------
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function ringCircle(cx, r, color, p, w) {
+  const c = 2 * Math.PI * r;
+  return `<circle class="track" cx="${cx}" cy="${cx}" r="${r}" stroke="${color}" ${w ? `stroke-width="${w}"` : ''}/>` +
+         `<circle class="bar" cx="${cx}" cy="${cx}" r="${r}" stroke="${color}" ${w ? `stroke-width="${w}"` : ''}
+           stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - Math.min(p, 1))}"
+           ${p === 0 ? 'stroke-opacity="0"' : ''}/>`;
+}
+
+function renderRings() {
+  const s = dayStats(current);
+  $('ringsSvg').innerHTML = PRIO_KEYS.map(p => {
+    const b = s.by[p];
+    return ringCircle(110, PRIOS[p].r, PRIOS[p].color, b.total ? b.done / b.total : 0);
+  }).join('');
+  $('pct').textContent = Math.round(s.pct * 100) + '%';
+  $('pctSub').textContent = s.total ? `${s.done} из ${s.total} выполнено` : 'нет задач';
+  $('legend').innerHTML = PRIO_KEYS.map(p => {
+    const b = s.by[p];
+    return `<div class="row"><span class="dot" style="background:${PRIOS[p].color}"></span>${PRIOS[p].name}
+      <span class="val">${b.done} / ${b.total}</span></div>`;
+  }).join('');
+  $('doneBanner').style.display = s.total && s.done === s.total ? 'block' : 'none';
+}
+
+function isLate(t) {
+  if (t.done || !t.time) return false;
+  const now = new Date(), today = dayKey(now);
+  if (current !== today) return current < today;
+  return t.time < String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+}
+
+function renderTasks() {
+  const all = tasksOf(current);
+  const used = Object.keys(CATS).filter(c => all.some(t => (t.category || '') === c));
+  if (filter !== 'all' && !used.includes(filter)) filter = 'all';
+  $('filters').innerHTML = used.length > 1
+    ? [['all', 'Все'], ...used.map(c => [c, CATS[c]])].map(([c, n]) =>
+        `<button data-cat="${c}" class="${filter === c ? 'on' : ''}">${n}</button>`).join('')
+    : '';
+
+  const list = all.filter(t => filter === 'all' || (t.category || '') === filter).sort((a, b) =>
+    (a.done - b.done) || (PRIOS[a.priority].order - PRIOS[b.priority].order) ||
+    (a.time || '99:99').localeCompare(b.time || '99:99'));
+  $('tasks').innerHTML = list.length ? list.map(t => `
+    <li class="task ${t.done ? 'done' : ''}" style="--c:${PRIOS[t.priority].color}" data-id="${t.id}">
+      <button class="check" data-act="toggle" title="Отметить"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg></button>
+      <div class="body">
+        <span class="text" data-act="edit">${esc(t.text)}</span>
+        ${t.time || t.category || t.rec ? `<div class="meta">
+          ${t.rec ? `<span class="tag" title="Повторяющаяся задача">↻</span>` : ''}
+          ${t.time ? `<span class="tag ${isLate(t) ? 'late' : ''}">до ${t.time}</span>` : ''}
+          ${t.category ? `<span class="tag">${CATS[t.category]}</span>` : ''}
+        </div>` : ''}
+      </div>
+      <button class="chip" data-act="prio" title="Сменить приоритет">${PRIOS[t.priority].name}</button>
+      <button class="del" data-act="del" title="Удалить">×</button>
+    </li>`).join('')
+    : '<li class="empty">На этот день задач нет. Добавь первую ↑</li>';
+
+  $('recurBox').hidden = !data.recurring.length;
+  $('recurSum').textContent = `Повторяющиеся задачи (${data.recurring.length})`;
+  $('recurList').innerHTML = data.recurring.map(r => `
+    <li><span>${esc(r.text)} <em>· ${REPEAT[r.repeat]}${r.repeat === 'weekly' ? ' (' + DOW[fromKey(r.start).getDay()] + ')' : ''}${r.time ? ' · до ' + r.time : ''}</em></span>
+      <button class="del" data-rule="${r.id}" title="Больше не повторять">×</button></li>`).join('');
+
+  // повторяющиеся не переносим: они и так появятся сами
+  const left = tasksOf(shift(current, -1)).filter(x => !x.done && !x.rec).length;
+  $('carry').hidden = !left;
+  $('carry').textContent = `Перенести невыполненные со вчера (${left})`;
+}
+
+function renderProgress() {
+  // неделя с понедельника, в которую входит выбранный день
+  const d = fromKey(current);
+  const monday = shift(current, -((d.getDay() + 6) % 7));
+  const todayK = dayKey(new Date());
+  const names = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  $('week').innerHTML = names.map((n, i) => {
+    const k = shift(monday, i), s = dayStats(k);
+    const color = s.total && s.done === s.total ? 'var(--later)' : 'var(--secondary)';
+    return `<div class="day ${k === current ? 'sel' : ''} ${k === todayK ? 'today' : ''}" data-day="${k}">
+      <div class="dn">${n}</div><div class="dd">${fromKey(k).getDate()}</div>
+      <svg viewBox="0 0 40 40">${ringCircle(20, 16, s.total ? color : 'var(--muted)', s.pct, 5)}</svg>
+    </div>`;
+  }).join('');
+
+  // серия: подряд идущие дни (до сегодня), где все задачи закрыты
+  let streak = 0, k = todayK;
+  const ts = dayStats(k);
+  if (!(ts.total && ts.done === ts.total)) k = shift(k, -1); // сегодня ещё в процессе — не рвём серию
+  while (true) { const s = dayStats(k); if (s.total && s.done === s.total) { streak++; k = shift(k, -1); } else break; }
+
+  let weekDone = 0, weekTotal = 0;
+  for (let i = 0; i < 7; i++) { const s = dayStats(shift(monday, i)); weekDone += s.done; weekTotal += s.total; }
+
+  let monthDone = 0, monthTotal = 0, urgentDone = 0;
+  const bars = [];
+  for (let i = 29; i >= 0; i--) {
+    const s = dayStats(shift(todayK, -i));
+    monthDone += s.done; monthTotal += s.total; urgentDone += s.by.urgent.done;
+    bars.push(s);
+  }
+
+  $('stats').innerHTML = [
+    [streak + ' ' + plural(streak, 'день', 'дня', 'дней'), 'серия закрытых дней'],
+    [`${weekDone} / ${weekTotal}`, 'выполнено за неделю'],
+    [(monthTotal ? Math.round(monthDone / monthTotal * 100) : 0) + '%', 'выполнение за 30 дней'],
+    [urgentDone, 'срочных закрыто за 30 дней'],
+  ].map(([n, l]) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+
+  const max = Math.max(1, ...bars.map(s => s.total));
+  $('chart').innerHTML = bars.map(s =>
+    `<div class="b" style="height:${s.total / max * 100}%" title="${s.done} из ${s.total}"><i style="height:${s.total ? s.done / s.total * 100 : 0}%"></i></div>`
+  ).join('');
+}
+
+let calMonth = null; // 'YYYY-MM-01' показанного месяца
+let calFor = null;   // день, под который он выставлен: стрелки месяца не сбиваются при перерисовке
+
+let popMonth = null;
+
+function renderCalendar() {
+  if (calFor !== current) { calMonth = popMonth = current.slice(0, 8) + '01'; calFor = current; }
+  monthGrid(calMonth, 'calTitle', 'cal');
+  monthGrid(popMonth, 'popTitle', 'popCal');
+}
+
+function monthGrid(month, titleId, gridId) {
+  const first = fromKey(month), todayK = dayKey(new Date());
+  $(titleId).textContent = first.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+  const start = shift(month, -((first.getDay() + 6) % 7));
+  let html = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(n => `<div class="wd">${n}</div>`).join('');
+  for (let i = 0; i < 42; i++) {
+    const k = shift(start, i), s = dayStats(k), ev = eventsOn(k);
+    const dots = (ev.length ? '<i class="star"></i>' : '') +
+      (s.total ? `<i class="${s.done === s.total ? 'ok' : ''}"></i>` : '');
+    const title = [...ev.map(e => '★ ' + e.text), s.total ? `Задачи: ${s.done} из ${s.total}` : ''].filter(Boolean).join('\n');
+    html += `<div class="c ${k.slice(0, 7) !== month.slice(0, 7) ? 'other' : ''} ${k === todayK ? 'today' : ''}
+      ${k === current ? 'sel' : ''} ${ev.length ? 'ev' : ''}" data-day="${k}" title="${esc(title)}">
+      ${fromKey(k).getDate()}<div class="dots">${dots}</div></div>`;
+  }
+  $(gridId).innerHTML = html;
+}
+
+function renderEvents() {
+  const fmt = k => fromKey(k).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', weekday: 'short' });
+  const item = (e, k, extra = '') => `<li ${extra}><span class="when">${fmt(k)}</span>
+    <span class="t">${e.yearly ? '↻ ' : ''}${esc(e.text)}</span>
+    <button class="del" data-ev="${e.id}" title="Удалить дату">×</button></li>`;
+
+  const dayEv = eventsOn(current);
+  $('evDayTitle').textContent = 'На выбранный день';
+  $('dayEvents').innerHTML = dayEv.length ? dayEv.map(e => item(e, current)).join('')
+    : '<li class="none">Нет важных дат</li>';
+  $('todayEvents').innerHTML = dayEv.map(e => `<div>★ ${esc(e.text)}</div>`).join('');
+  if (!$('eventDate').value || $('eventDate').dataset.auto) { $('eventDate').value = current; $('eventDate').dataset.auto = '1'; }
+
+  const todayK = dayKey(new Date()), up = [];
+  for (let i = 0; i <= 60; i++) {
+    const k = shift(todayK, i);
+    for (const e of eventsOn(k)) up.push(item(e, k, `class="go" data-day="${k}"`).replace('<span class="when">',
+      `<span class="when">${i === 0 ? 'сегодня · ' : i === 1 ? 'завтра · ' : ''}`));
+  }
+  $('upcoming').innerHTML = up.join('') || '<li class="none">Ничего не запланировано</li>';
+}
+
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+}
+
+function render() {
+  materialize(current);
+  const d = fromKey(current);
+  const isToday = current === dayKey(new Date());
+  $('dateLabel').textContent = (isToday ? 'Сегодня, ' : '') +
+    d.toLocaleDateString('ru-RU', { weekday: isToday ? undefined : 'short', day: 'numeric', month: 'long' });
+  renderRings(); renderTasks(); renderProgress(); renderCalendar(); renderEvents();
+}
+
+// ---------- события ----------
+$('addForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const text = $('taskInput').value.trim();
+  if (!text) return;
+  addTask(text, document.querySelector('input[name=prio]:checked').value, $('taskTime').value, $('taskCat').value, $('taskRepeat').value);
+  $('taskRepeat').value = '';
+  $('taskInput').value = '';
+  $('taskTime').value = '';
+  $('taskInput').focus();
+});
+
+$('tasks').addEventListener('click', e => {
+  const el = e.target.closest('[data-act]'); if (!el) return;
+  const id = el.closest('.task').dataset.id;
+  if (el.dataset.act === 'toggle') updateTask(id, t => t.done = !t.done);
+  if (el.dataset.act === 'prio') updateTask(id, t => t.priority = PRIO_KEYS[(PRIOS[t.priority].order + 1) % 3]);
+  if (el.dataset.act === 'del') deleteTask(id);
+});
+
+$('tasks').addEventListener('dblclick', e => {
+  const el = e.target.closest('.text'); if (!el) return;
+  const id = el.closest('.task').dataset.id;
+  el.contentEditable = 'true'; el.focus();
+  document.getSelection().selectAllChildren(el);
+  const finish = () => {
+    el.removeEventListener('blur', finish);
+    const text = el.textContent.trim();
+    if (text) updateTask(id, t => t.text = text); else render();
+  };
+  el.addEventListener('blur', finish);
+  el.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); el.blur(); }
+    if (ev.key === 'Escape') { el.textContent = ''; el.blur(); }
+  });
+});
+
+$('taskCat').innerHTML = Object.entries(CATS).map(([c, n]) => `<option value="${c}">${n}</option>`).join('');
+$('recurList').addEventListener('click', async e => {
+  const el = e.target.closest('[data-rule]');
+  if (el && await ask('Больше не повторять эту задачу? Невыполненные копии с сегодняшнего дня удалятся.')) deleteRule(el.dataset.rule);
+});
+$('filters').addEventListener('click', e => {
+  const el = e.target.closest('[data-cat]'); if (el) { filter = el.dataset.cat; renderTasks(); }
+});
+
+$('week').addEventListener('click', e => {
+  const el = e.target.closest('[data-day]'); if (el) { current = el.dataset.day; render(); }
+});
+$('cal').addEventListener('click', e => {
+  const el = e.target.closest('[data-day]'); if (el) { current = el.dataset.day; render(); }
+});
+const addMonths = (m, n) => { const d = fromKey(m); d.setMonth(d.getMonth() + n); return dayKey(d); };
+$('calPrev').onclick = () => { calMonth = addMonths(calMonth, -1); renderCalendar(); };
+$('calNext').onclick = () => { calMonth = addMonths(calMonth, 1); renderCalendar(); };
+
+// всплывающий календарь у даты: открывается наведением, на телефоне — касанием
+$('popPrev').onclick = () => { popMonth = addMonths(popMonth, -1); renderCalendar(); };
+$('popNext').onclick = () => { popMonth = addMonths(popMonth, 1); renderCalendar(); };
+$('dateLabel').onclick = () => $('datePick').classList.toggle('open');
+$('popCal').addEventListener('click', e => {
+  const el = e.target.closest('[data-day]'); if (!el) return;
+  current = el.dataset.day;
+  $('datePick').classList.remove('open');
+  $('datePick').classList.add('closing'); // прячем, пока курсор ещё над ним
+  render();
+  $('taskInput').focus();
+});
+$('datePick').addEventListener('mouseleave', () => $('datePick').classList.remove('closing'));
+document.addEventListener('click', e => { if (!$('datePick').contains(e.target)) $('datePick').classList.remove('open'); });
+
+$('eventDate').addEventListener('input', () => delete $('eventDate').dataset.auto);
+$('eventForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const text = $('eventInput').value.trim();
+  if (!text || !$('eventDate').value) return;
+  addEvent(text, $('eventDate').value, $('eventYearly').checked);
+  $('eventInput').value = ''; $('eventYearly').checked = false;
+});
+for (const id of ['dayEvents', 'upcoming']) {
+  $(id).addEventListener('click', async e => {
+    const del = e.target.closest('[data-ev]');
+    if (del) {
+      const ev = data.events.find(x => x.id === del.dataset.ev);
+      if (ev && await ask(`Удалить важную дату «${ev.text}»?`)) deleteEvent(ev.id);
+      return;
+    }
+    const go = e.target.closest('[data-day]');
+    if (go) { current = go.dataset.day; render(); }
+  });
+}
+
+$('prev').onclick = () => { current = shift(current, -1); render(); };
+$('next').onclick = () => { current = shift(current, 1); render(); };
+$('today').onclick = () => { current = dayKey(new Date()); render(); };
+$('carry').onclick = carryOver;
+$('storageWarn').hidden = storageOk;
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('modal').classList.contains('show')) $('modalNo').click(); });
+
+// ---------- файл ----------
+$('exportBtn').onclick = () => {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `planner-${dayKey(new Date())}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$('importBtn').onclick = () => $('importFile').click();
+$('importFile').onchange = async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  try {
+    const parsed = JSON.parse(await file.text());
+    if (!parsed || typeof parsed.tasks !== 'object') throw new Error();
+    if (!await ask('Заменить текущие задачи и даты данными из файла?', 'Заменить')) return;
+    data = normalize(parsed); save(); render();
+  } catch { ask('Не получилось прочитать файл: это не файл планировщика.', 'Понятно', ''); }
+};
+
+render();
+</script>
+</body>
+</html>
